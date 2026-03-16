@@ -136,6 +136,7 @@ CREATE TABLE cases (
     content LONGTEXT,
     judgement LONGTEXT
 );
+```
 
 然后运行：
 
