@@ -79,18 +79,16 @@ Gradio Web 界面展示
 │
 LLM 进行摘要与信息抽取
 
----
-
-# 项目结构
-
+```
 project/
-├── app.py
-├── build_index.py
-├── data_import.py
-├── .gitignore
-└── README.md
+├── LeCaDR/
+│   ├── app.py
+│   ├── build_index.py
+│   └── data_import.py
+├── README.md
+└── requirements.txt
+```
 
----
 
 # 数据来源
 
