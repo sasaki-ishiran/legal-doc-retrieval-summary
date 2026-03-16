@@ -83,15 +83,11 @@ LLM 进行摘要与信息抽取
 
 # 项目结构
 
-project
-│
-├── app.py # Web 系统主程序（Gradio 界面）
-├── build_index.py # 构建向量索引
-├── data_import.py # 导入法律文书数据
-│
-├── legal_vector.index # FAISS 索引文件
-├── db_ids.npy # 向量 ID 映射文件
-│
+project/
+├── app.py
+├── build_index.py
+├── data_import.py
+├── .gitignore
 └── README.md
 
 ---
