@@ -1,151 +1,140 @@
-import os
+"""LeCaRD 数据导入脚本。
+
+回到有真实数据集的电脑后，先在 LeCaDR/config.py 或环境变量 LEGAL_IR_DATA_ROOT 中配置数据集路径，再运行本脚本。
+"""
+
+from __future__ import annotations
+
 import json
+import os
+from typing import Set
+
 import pymysql
-import re
 from tqdm import tqdm
 
-# ================= 1. 配置区域 =================
-
-# 数据库连接配置
-DB_CONFIG = {
-    'host': 'localhost',
-    'user': 'root',
-    'password': 'your_password',
-    'db': 'legal_ir',
-    'charset': 'utf8mb4'
-}
-
-# 数据集根目录
-# 建议指向 candidates 或 candidates1 这一层，脚本会自动遍历下面所有的子文件夹
-DATA_ROOT_PATH = r"D:\PythonStudio\Projects\LS\LeCaDR\LeCaRD-main\data\candidates"
+from config import DB_CONFIG, PATH_CONFIG
+from text_utils import clean_text
 
 
-# ================= 2. 数据清洗函数 =================
-
-def clean_text(text):
-    """
-    清洗文本：去除HTML标签、全角空格、多余换行
-    """
-    if not text:
-        return ""
-
-    # 1. 转换为字符串（防止 None）
-    text = str(text)
-
-    # 2. 去除 HTML 标签 (你的数据可能比较干净，但防一手)
-    text = re.sub(r'<[^>]+>', '', text)
-
-    # 3. 替换全角空格 (\u3000) 和 &nbsp;
-    text = text.replace('\u3000', ' ').replace('&nbsp;', ' ')
-
-    # 4. 去除多余的空白字符（将连续空格/换行合并为一个）
-    # 这一步能显著压缩文本体积，提高检索效率
-    text = re.sub(r'\s+', ' ', text)
-
-    return text.strip()
+CREATE_TABLE_SQL = """
+CREATE TABLE IF NOT EXISTS cases (
+    id INT PRIMARY KEY AUTO_INCREMENT,
+    aj_id VARCHAR(100),
+    writ_id VARCHAR(100),
+    case_name TEXT,
+    content LONGTEXT,
+    judgement LONGTEXT,
+    INDEX idx_aj_id (aj_id)
+) DEFAULT CHARSET=utf8mb4;
+"""
 
 
-# ================= 3. 主程序 =================
+def connect_db():
+    """连接 MySQL 数据库。"""
 
-def main():
-    print("正在连接数据库...")
-    try:
-        conn = pymysql.connect(**DB_CONFIG)
-        cursor = conn.cursor()
-    except Exception as e:
-        print(f"❌ 数据库连接失败: {e}")
+    return pymysql.connect(**DB_CONFIG.to_pymysql_kwargs())
+
+
+def ensure_table(cursor) -> None:
+    """确保 cases 表存在。"""
+
+    cursor.execute(CREATE_TABLE_SQL)
+
+
+def load_existing_ids(cursor) -> Set[str]:
+    """读取已有 aj_id，用于去重。"""
+
+    cursor.execute("SELECT aj_id FROM cases")
+    return {str(row[0]) for row in cursor.fetchall() if row[0]}
+
+
+def collect_json_files(data_root_path: str) -> list:
+    """递归扫描数据集目录下的 JSON 文件。"""
+
+    json_files = []
+    for root, _, files in os.walk(data_root_path):
+        for file_name in files:
+            if file_name.lower().endswith(".json"):
+                json_files.append(os.path.join(root, file_name))
+    return json_files
+
+
+def import_cases() -> None:
+    """导入 LeCaRD JSON 数据到 MySQL。"""
+
+    data_root_path = PATH_CONFIG.data_root_path
+    if not os.path.exists(data_root_path):
+        print("❌ 数据集路径不存在：{}".format(data_root_path))
+        print("请在 LeCaDR/config.py 中修改 data_root_path，或设置环境变量 LEGAL_IR_DATA_ROOT。")
         return
 
-    # 1. 获取已有 ID，用于去重
+    print("正在连接数据库...")
+    try:
+        conn = connect_db()
+        cursor = conn.cursor()
+        ensure_table(cursor)
+        conn.commit()
+    except Exception as exc:
+        print("❌ 数据库连接或建表失败：{}".format(exc))
+        return
+
     print("正在加载已有数据 ID 以便去重...")
-    cursor.execute("SELECT aj_id FROM cases")
-    existing_ids = set(row[0] for row in cursor.fetchall())
-    print(f"✅ 数据库中已有 {len(existing_ids)} 条记录。")
+    existing_ids = load_existing_ids(cursor)
+    print("✅ 数据库中已有 {} 条记录。".format(len(existing_ids)))
 
-    # 2. 扫描文件列表
-    print(f"正在扫描目录: {DATA_ROOT_PATH}")
-    json_files = []
-    # os.walk 会递归遍历所有子文件夹
-    for root, dirs, files in os.walk(DATA_ROOT_PATH):
-        for file in files:
-            if file.endswith(".json"):
-                json_files.append(os.path.join(root, file))
+    print("正在扫描目录：{}".format(data_root_path))
+    json_files = collect_json_files(data_root_path)
+    print("📂 共发现 {} 个 JSON 文件。".format(len(json_files)))
 
-    print(f"📂 共发现 {len(json_files)} 个 JSON 文件。")
-
-    # 3. 开始处理
     success_count = 0
     skip_count = 0
     error_count = 0
 
-    # 使用 tqdm 显示进度条
+    insert_sql = """
+        INSERT INTO cases (aj_id, writ_id, case_name, content, judgement)
+        VALUES (%s, %s, %s, %s, %s)
+    """
+
     for file_path in tqdm(json_files, desc="入库进度", unit="file"):
         try:
-            with open(file_path, 'r', encoding='utf-8') as f:
-                data = json.load(f)
+            with open(file_path, "r", encoding="utf-8") as file:
+                data = json.load(file)
 
-            # --- 提取字段 ---
-            aj_id = data.get('ajId', '').strip()
-
-            # 如果没有 ID，无法入库，跳过
+            aj_id = clean_text(data.get("ajId", ""))
             if not aj_id:
                 error_count += 1
                 continue
 
-            # 去重检查
             if aj_id in existing_ids:
                 skip_count += 1
                 continue
 
-            writ_id = data.get('writId', '').strip()
+            writ_id = clean_text(data.get("writId", ""))
+            case_name = clean_text(data.get("ajName") or data.get("writName") or "未知案件名称")
+            content = clean_text(data.get("qw", ""))
+            judgement = clean_text(data.get("pjjg", ""))
 
-            # 案件名称处理：优先 ajName，没有则 writName
-            case_name = data.get('ajName')
-            if not case_name:
-                case_name = data.get('writName', '未知案件名称')
-
-            # 提取正文和判决
-            # 注意：LeCaRD 数据集的 qw 字段通常包含了 ajjbqk, cpfxgc 等内容
-            # 所以我们主要存 qw 即可，省空间
-            content = data.get('qw', '')
-            judgement = data.get('pjjg', '')
-
-            # --- 清洗数据 ---
-            clean_name = clean_text(case_name)
-            clean_content = clean_text(content)
-            clean_judgement = clean_text(judgement)
-
-            # --- 入库 ---
-            sql = """
-                INSERT INTO cases (aj_id, writ_id, case_name, content, judgement)
-                VALUES (%s, %s, %s, %s, %s)
-            """
-            cursor.execute(sql, (aj_id, writ_id, clean_name, clean_content, clean_judgement))
-
-            existing_ids.add(aj_id)  # 更新内存去重表
+            cursor.execute(insert_sql, (aj_id, writ_id, case_name, content, judgement))
+            existing_ids.add(aj_id)
             success_count += 1
 
-            # 每 100 条提交一次，防止内存溢出并提高速度
             if success_count % 100 == 0:
                 conn.commit()
-
-        except Exception as e:
-            # print(f"文件出错 {file_path}: {e}") # 调试时可取消注释
+        except Exception:
             error_count += 1
             continue
 
-    # 提交剩余的数据
     conn.commit()
     cursor.close()
     conn.close()
 
     print("\n" + "=" * 40)
     print("🎉 处理完成！")
-    print(f"✅ 成功入库: {success_count} 条")
-    print(f"⏭️ 重复跳过: {skip_count} 条")
-    print(f"❌ 错误/忽略: {error_count} 条")
+    print("✅ 成功入库：{} 条".format(success_count))
+    print("⏭️ 重复跳过：{} 条".format(skip_count))
+    print("❌ 错误/忽略：{} 条".format(error_count))
     print("=" * 40)
 
 
 if __name__ == "__main__":
-    main()
+    import_cases()
