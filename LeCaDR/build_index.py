@@ -4,20 +4,42 @@ from __future__ import annotations
 
 import os
 
-import faiss
-import numpy as np
-import pymysql
-from modelscope import snapshot_download
-from sentence_transformers import SentenceTransformer
+try:
+    import faiss
+except Exception:
+    faiss = None
+
+try:
+    import numpy as np
+except Exception:
+    np = None
+
+try:
+    import pymysql
+except Exception:
+    pymysql = None
+
+try:
+    from modelscope import snapshot_download
+    from sentence_transformers import SentenceTransformer
+except Exception:
+    snapshot_download = None
+    SentenceTransformer = None
+
 from tqdm import tqdm
 
 from config import DB_CONFIG, MODEL_CONFIG, PATH_CONFIG, RETRIEVAL_CONFIG
-from text_utils import clean_text
+from text_utils import build_rag_context, clean_text
+
+
+INDEX_RETRIEVAL_QUERY = "案由 案件事实 争议焦点 本院认为 法院认为 法律条款 判决如下 裁判结果"
 
 
 def connect_db():
     """连接 MySQL 数据库。"""
 
+    if pymysql is None:
+        raise RuntimeError("未安装 pymysql，无法连接 MySQL")
     return pymysql.connect(**DB_CONFIG.to_pymysql_kwargs())
 
 
@@ -32,6 +54,9 @@ def remove_old_index_files() -> None:
 def load_embedding_model() -> SentenceTransformer:
     """从 ModelScope 下载并加载语义模型。"""
 
+    if snapshot_download is None or SentenceTransformer is None:
+        raise RuntimeError("未安装或无法加载 modelscope/sentence_transformers，无法构建语义索引")
+
     print("📥 正在从 ModelScope 定位模型：{}".format(MODEL_CONFIG.embedding_model_id))
     model_dir = snapshot_download(MODEL_CONFIG.embedding_model_id)
     print("✅ 模型路径：{}".format(model_dir))
@@ -39,16 +64,43 @@ def load_embedding_model() -> SentenceTransformer:
 
 
 def build_index_text(title: str, content: str) -> str:
-    """构建向量化输入文本。"""
+    """构建向量化输入文本，避免只取长文书开头导致关键信息丢失。"""
 
     title = clean_text(title)
     content = clean_text(content)
-    text = "{} {}".format(title, content[: RETRIEVAL_CONFIG.index_text_length]).strip()
+    if len(content) <= RETRIEVAL_CONFIG.index_text_length:
+        body = content
+    else:
+        _, selected_chunks = build_rag_context(
+            content,
+            "{} {}".format(title, INDEX_RETRIEVAL_QUERY),
+            chunk_size=max(RETRIEVAL_CONFIG.rag_chunk_size, RETRIEVAL_CONFIG.index_text_length),
+            overlap=RETRIEVAL_CONFIG.rag_chunk_overlap,
+            top_k=3,
+            max_chars=max(RETRIEVAL_CONFIG.rag_chunk_size, RETRIEVAL_CONFIG.index_text_length * 2),
+        )
+        body = " ".join(chunk.get("text", "") for chunk in selected_chunks) or content
+
+    max_index_chars = max(RETRIEVAL_CONFIG.index_text_length, RETRIEVAL_CONFIG.rag_chunk_size)
+    text = "{} {}".format(title, body[:max_index_chars]).strip()
     return text or "无内容"
 
 
 def build_vector_index() -> None:
     """从 MySQL cases 表构建 FAISS 向量索引。"""
+
+    missing_dependencies = []
+    if faiss is None:
+        missing_dependencies.append("faiss")
+    if np is None:
+        missing_dependencies.append("numpy")
+    if pymysql is None:
+        missing_dependencies.append("pymysql")
+    if snapshot_download is None or SentenceTransformer is None:
+        missing_dependencies.append("modelscope/sentence_transformers")
+    if missing_dependencies:
+        print("❌ 依赖库不可用，无法重建索引：{}".format("、".join(missing_dependencies)))
+        return
 
     remove_old_index_files()
     print("🚀 开始重建索引...")

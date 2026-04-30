@@ -47,6 +47,7 @@ class ModelConfig:
     llm_api_key: str = os.getenv("LEGAL_IR_LLM_API_KEY", "ollama")
     llm_base_url: str = os.getenv("LEGAL_IR_LLM_BASE_URL", "http://localhost:11434/v1")
     llm_model_name: str = os.getenv("LEGAL_IR_LLM_MODEL", "qwen2.5:7b")
+    llm_prompt_strategy: str = os.getenv("LEGAL_IR_LLM_PROMPT_STRATEGY", "rag_cot").lower()
 
 
 @dataclass(frozen=True)
@@ -74,6 +75,10 @@ class RetrievalConfig:
     keyword_weight: float = float(os.getenv("LEGAL_IR_KEYWORD_WEIGHT", "0.3"))
     snippet_length: int = int(os.getenv("LEGAL_IR_SNIPPET_LENGTH", "220"))
     index_text_length: int = int(os.getenv("LEGAL_IR_INDEX_TEXT_LENGTH", "500"))
+    rag_chunk_size: int = int(os.getenv("LEGAL_IR_RAG_CHUNK_SIZE", "900"))
+    rag_chunk_overlap: int = int(os.getenv("LEGAL_IR_RAG_CHUNK_OVERLAP", "160"))
+    rag_top_k: int = int(os.getenv("LEGAL_IR_RAG_TOP_K", "5"))
+    rag_context_max_chars: int = int(os.getenv("LEGAL_IR_RAG_CONTEXT_MAX_CHARS", "4200"))
 
 
 @dataclass(frozen=True)
