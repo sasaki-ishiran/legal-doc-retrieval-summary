@@ -1,15 +1,21 @@
 """检索模块。
 
-提供关键词检索、语义向量检索结果包装和混合检索融合逻辑。
+提供 BM25 关键词检索、语义向量检索结果包装和混合检索融合逻辑。
 """
 
 from __future__ import annotations
 
+import math
+from collections import Counter
 from dataclasses import dataclass
 from typing import Callable, Dict, List, Optional, Union
 
 from config import RETRIEVAL_CONFIG
-from text_utils import build_reason, build_snippet, keyword_overlap_score, normalize_scores, truncate_text
+from text_utils import build_reason, build_snippet, keyword_overlap_score, normalize_scores, tokenize, truncate_text
+
+
+BM25_K1 = 1.5
+BM25_B = 0.75
 
 
 @dataclass
@@ -66,16 +72,69 @@ def case_search_text(case: Dict) -> str:
     return "{} {} {}".format(normalized["case_name"], normalized["content"], normalized["judgement"])
 
 
+def _bm25_score(
+    query_tokens: List[str],
+    doc_counter: Counter,
+    doc_length: int,
+    avg_doc_length: float,
+    idf_map: Dict[str, float],
+) -> float:
+    """计算单篇文书的 BM25 分数。"""
+
+    if not query_tokens or doc_length <= 0 or avg_doc_length <= 0:
+        return 0.0
+
+    score = 0.0
+    query_counter = Counter(query_tokens)
+    for token, query_freq in query_counter.items():
+        term_freq = doc_counter.get(token, 0)
+        if term_freq <= 0:
+            continue
+
+        idf = idf_map.get(token, 0.0)
+        denominator = term_freq + BM25_K1 * (1 - BM25_B + BM25_B * doc_length / avg_doc_length)
+        if denominator <= 0:
+            continue
+        score += query_freq * idf * (term_freq * (BM25_K1 + 1)) / denominator
+    return float(score)
+
+
 def keyword_search(query: str, cases: List[Dict], top_k: Optional[int] = None) -> List[Dict]:
-    """基于轻量关键词重合度的检索。"""
+    """基于 BM25 的关键词检索。
+
+    保留 keyword_search 名称，便于界面和论文中继续使用“关键词检索”这一模式。
+    """
 
     top_k = top_k or RETRIEVAL_CONFIG.default_top_k
-    scored_results: List[SearchResult] = []
+    query_tokens = tokenize(query)
+    if not query_tokens or not cases:
+        return []
+
+    documents = []
+    document_frequency: Counter = Counter()
+    total_length = 0
 
     for case in cases:
         normalized = normalize_case(case)
         search_text = case_search_text(normalized)
-        keyword_score = keyword_overlap_score(query, search_text)
+        tokens = tokenize(search_text)
+        token_counter = Counter(tokens)
+        doc_length = sum(token_counter.values())
+        total_length += doc_length
+        document_frequency.update(token_counter.keys())
+        documents.append((normalized, token_counter, doc_length))
+
+    total_docs = len(documents)
+    avg_doc_length = total_length / total_docs if total_docs else 0.0
+    idf_map = {
+        token: math.log(1 + (total_docs - df + 0.5) / (df + 0.5))
+        for token, df in document_frequency.items()
+    }
+
+    scored_results: List[SearchResult] = []
+
+    for normalized, token_counter, doc_length in documents:
+        keyword_score = _bm25_score(query_tokens, token_counter, doc_length, avg_doc_length, idf_map)
         if keyword_score <= 0:
             continue
 

@@ -25,7 +25,7 @@ def precision_at_k(retrieved_ids: List, relevant_ids: Iterable, k: int) -> float
         return 0.0
     relevant = _to_set(relevant_ids)
     hit_count = sum(1 for item in retrieved_top_k if item in relevant)
-    return hit_count / len(retrieved_top_k)
+    return hit_count / k
 
 
 def recall_at_k(retrieved_ids: List, relevant_ids: Iterable, k: int) -> float:

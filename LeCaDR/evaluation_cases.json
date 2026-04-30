@@ -4,11 +4,47 @@
     "relevant_ids": [6]
   },
   {
+    "query": "以销售虚拟商品为名 缴费加入 按发展人员返利",
+    "relevant_ids": [6]
+  },
+  {
     "query": "酒后驾驶 醉酒 机动车 危险驾驶",
+    "relevant_ids": [3]
+  },
+  {
+    "query": "血液乙醇含量达到醉酒标准 认罪认罚",
     "relevant_ids": [3]
   },
   {
     "query": "借条 微信转账 民间借贷 利息",
     "relevant_ids": [2]
+  },
+  {
+    "query": "借款到期未还 原告要求偿还本金和利息",
+    "relevant_ids": [2]
+  },
+  {
+    "query": "签订虚假购销合同 收取预付款 非法占有",
+    "relevant_ids": [1]
+  },
+  {
+    "query": "没有履约能力 骗取货款 合同诈骗",
+    "relevant_ids": [1]
+  },
+  {
+    "query": "公司解除劳动关系 未支付经济补偿",
+    "relevant_ids": [4]
+  },
+  {
+    "query": "劳动合同 违法解除 赔偿金 年休假工资",
+    "relevant_ids": [4]
+  },
+  {
+    "query": "电动车与小型客车碰撞 事故主要责任 医疗费",
+    "relevant_ids": [5]
+  },
+  {
+    "query": "交通事故 保险公司 误工费 护理费 损失赔偿",
+    "relevant_ids": [5]
   }
 ]

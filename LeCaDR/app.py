@@ -300,8 +300,11 @@ def on_click_analyze(content: str, judgement: str):
     return llm_process(content, judgement)
 
 
-def run_demo_evaluation(k: int = 3) -> List[List]:
-    """演示评测。真实论文实验应使用有数据电脑上的人工标注评测集。"""
+def run_demo_evaluation(k: int = 5) -> List[List]:
+    """运行三种检索模式对比评测。
+
+    演示模式下使用内置案例编号；真实论文实验应替换为真实数据的人工标注评测集。
+    """
 
     k = normalize_top_k(k)
     eval_cases = load_evaluation_cases(PATH_CONFIG.evaluation_cases_path)
@@ -313,30 +316,39 @@ def run_demo_evaluation(k: int = 3) -> List[List]:
         ]
 
     rows = []
-    all_metrics = []
+    metrics_by_mode: Dict[str, List[Dict]] = {
+        "关键词检索": [],
+        "语义检索": [],
+        "混合检索": [],
+    }
     for item in eval_cases:
         query = item.get("query", "")
         relevant_ids = item.get("relevant_ids", [])
-        results, _ = search_engine(query, "混合检索", k)
-        retrieved_ids = [result.get("id") for result in results]
-        metrics = evaluate_single_query(retrieved_ids, relevant_ids, k=k)
-        all_metrics.append(metrics)
-        rows.append(
-            [
-                query,
-                ",".join(str(v) for v in relevant_ids),
-                ",".join(str(v) for v in retrieved_ids),
-                round(metrics.get("Precision@{}".format(k), 0.0), 4),
-                round(metrics.get("Recall@{}".format(k), 0.0), 4),
-                round(metrics.get("MRR", 0.0), 4),
-                round(metrics.get("nDCG@{}".format(k), 0.0), 4),
-            ]
-        )
+        for mode in metrics_by_mode.keys():
+            results, _ = search_engine(query, mode, k)
+            retrieved_ids = [result.get("id") for result in results]
+            metrics = evaluate_single_query(retrieved_ids, relevant_ids, k=k)
+            metrics_by_mode[mode].append(metrics)
+            rows.append(
+                [
+                    mode,
+                    query,
+                    ",".join(str(v) for v in relevant_ids),
+                    ",".join(str(v) for v in retrieved_ids),
+                    round(metrics.get("Precision@{}".format(k), 0.0), 4),
+                    round(metrics.get("Recall@{}".format(k), 0.0), 4),
+                    round(metrics.get("MRR", 0.0), 4),
+                    round(metrics.get("nDCG@{}".format(k), 0.0), 4),
+                ]
+            )
 
-    avg = average_metrics(all_metrics)
-    if avg:
+    for mode, metrics_list in metrics_by_mode.items():
+        avg = average_metrics(metrics_list)
+        if not avg:
+            continue
         rows.append(
             [
+                mode,
                 "平均值",
                 "-",
                 "-",
@@ -413,11 +425,11 @@ def build_interface() -> gr.Blocks:
                 txt_extraction = gr.Code(label="关键要素提取", language="json", lines=10)
 
         with gr.Accordion("📊 检索评测演示", open=False):
-            gr.Markdown("评测模块用于论文实验。当前无真实标注文件时，会使用内置演示查询。")
+            gr.Markdown("评测模块用于论文实验。当前无真实标注文件时，会使用内置演示查询；正式论文应替换为真实数据人工标注查询。")
             btn_eval = gr.Button("运行演示评测")
             eval_table = gr.Dataframe(
-                headers=["查询", "相关ID", "返回ID", "Precision", "Recall", "MRR", "nDCG"],
-                label="评测结果",
+                headers=["检索模式", "查询", "相关ID", "返回ID", "Precision", "Recall", "MRR", "nDCG"],
+                label="三种检索模式评测结果",
                 interactive=False,
             )
 
